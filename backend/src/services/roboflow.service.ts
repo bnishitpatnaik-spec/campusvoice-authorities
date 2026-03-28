@@ -1,10 +1,6 @@
 import { config } from '../config/env'
 
-const ROBOFLOW_BASE = 'https://serverless.roboflow.com'
 const ANTHROPIC_BASE = 'https://api.anthropic.com/v1'
-
-const CLIP_PASS = 0.75
-const CLIP_FAIL = 0.55
 
 export interface VerificationResult {
   passed: boolean
@@ -14,90 +10,26 @@ export interface VerificationResult {
   details?: Record<string, any>
 }
 
+/**
+ * Resolution verification — uses Claude vision directly.
+ * Claude compares before/after images and decides if the resolution is valid.
+ * CLIP/YOLO are unreliable for same-object different-angle photos.
+ */
 export async function runResolutionVerification(
   beforeImageUrl: string,
   afterImageUrl: string
 ): Promise<VerificationResult> {
-
-  if (!config.ROBOFLOW_WORKSPACE || !config.ROBOFLOW_WORKFLOW_ID ||
-      config.ROBOFLOW_WORKSPACE === 'your-workspace') {
-    return await claudeFallback(beforeImageUrl, afterImageUrl, 0, null)
-  }
-
-  try {
-    const response = await fetch(
-      `${ROBOFLOW_BASE}/${config.ROBOFLOW_WORKSPACE}/workflows/${config.ROBOFLOW_WORKFLOW_ID}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          api_key: config.ROBOFLOW_API_KEY,
-          inputs: {
-            image:        { type: 'url', value: afterImageUrl },
-            before_image: { type: 'url', value: beforeImageUrl },
-          },
-          use_cache: true,
-        }),
-      }
-    )
-
-    if (!response.ok) {
-      return await claudeFallback(beforeImageUrl, afterImageUrl, 0, null)
-    }
-
-    const data = await response.json()
-    const output = Array.isArray(data.outputs) ? data.outputs[0] : data
-    const yoloPredictions = output?.predictions?.predictions || []
-
-    if (yoloPredictions.length === 0) {
-      return await claudeFallback(beforeImageUrl, afterImageUrl, 0, output)
-    }
-
-    const similarityScore: number = output?.similarity_score ?? output?.clip_similarity ?? 0
-
-    if (similarityScore >= CLIP_PASS) {
-      return {
-        passed: true,
-        gate: 'CLIP',
-        score: similarityScore,
-        reason: `Resolution verified. Image similarity: ${(similarityScore * 100).toFixed(1)}%`,
-      }
-    }
-
-    if (similarityScore < CLIP_FAIL) {
-      return {
-        passed: false,
-        gate: 'CLIP',
-        score: similarityScore,
-        reason: `Resolution rejected: After photo does not match the original complaint (similarity: ${(similarityScore * 100).toFixed(1)}%).`,
-      }
-    }
-
-    return await claudeFallback(beforeImageUrl, afterImageUrl, similarityScore, output)
-
-  } catch (err: any) {
-    console.error('Roboflow service error:', err.message)
-    return await claudeFallback(beforeImageUrl, afterImageUrl, 0, null)
-  }
+  return await claudeVerify(beforeImageUrl, afterImageUrl)
 }
 
-async function claudeFallback(
+async function claudeVerify(
   beforeUrl: string,
-  afterUrl: string,
-  clipScore: number,
-  roboflowOutput: any
+  afterUrl: string
 ): Promise<VerificationResult> {
 
   if (!config.ANTHROPIC_API_KEY) {
-    if (clipScore < CLIP_FAIL) {
-      return {
-        passed: false,
-        gate: 'FAILED',
-        score: clipScore,
-        reason: 'Resolution rejected: The after photo does not appear to match the original complaint.',
-      }
-    }
-    return { passed: true, gate: 'CLAUDE', score: clipScore, reason: 'Claude unavailable — passed through' }
+    console.warn('⚠️  No Anthropic key — skipping AI verification')
+    return { passed: true, gate: 'CLAUDE', reason: 'AI verification skipped (no API key)' }
   }
 
   try {
@@ -117,23 +49,25 @@ async function claudeFallback(
             content: [
               {
                 type: 'text',
-                text: `You are a campus complaint resolution verifier.
+                text: `You are a campus complaint resolution verifier for VIT Chennai.
 
-Image 1 (BEFORE): Original complaint photo showing the problem.
-Image 2 (AFTER): Resolution photo submitted by the authority.
+Image 1 (BEFORE): The original complaint photo showing the problem.
+Image 2 (AFTER): The resolution photo submitted by the authority.
 
-IMPORTANT: The after photo may be taken from a different angle or distance than the before photo. Focus on whether they show the SAME TYPE of object/issue in a SIMILAR location.
+The photos may be taken from different angles, distances, or lighting conditions — this is NORMAL.
+
+ACCEPT the resolution if:
+- Both images show the same TYPE of object (chair, desk, bin, socket, etc.)
+- The after photo shows the same general area or object
+- The issue appears to have been addressed
 
 REJECT only if:
-- Completely different objects (e.g., before=broken chair, after=water dispenser)
-- Clearly different rooms or locations
+- The images clearly show COMPLETELY DIFFERENT objects (e.g., before=chair, after=water dispenser)
+- The after photo is obviously from a completely different building/room
 
-ACCEPT if:
-- Same type of object (even if different angle)
-- Same general area/location
-- Issue appears addressed
+Be LENIENT — authorities often take close-up photos for resolution proof.
 
-Respond with ONLY valid JSON: {"matched": true/false, "confidence": 0.0-1.0, "reason": "one sentence"}`,
+Respond with ONLY this JSON: {"matched": true/false, "confidence": 0.0-1.0, "reason": "brief explanation"}`,
               },
               { type: 'image', source: { type: 'url', url: beforeUrl } },
               { type: 'image', source: { type: 'url', url: afterUrl } },
@@ -144,47 +78,40 @@ Respond with ONLY valid JSON: {"matched": true/false, "confidence": 0.0-1.0, "re
     })
 
     if (!response.ok) {
-      console.error('Claude API error:', await response.text())
-      if (clipScore < 0.4) {
-        return {
-          passed: false,
-          gate: 'CLAUDE',
-          score: clipScore,
-          reason: 'Resolution rejected: Images appear to show different objects.',
-        }
-      }
-      return { passed: true, gate: 'CLAUDE', score: clipScore, reason: 'Claude unavailable — passed through' }
+      const errText = await response.text()
+      console.error('Claude API error:', errText)
+      // If Claude is unavailable, pass through (don't block resolution)
+      return { passed: true, gate: 'CLAUDE', reason: 'Claude unavailable — passed through' }
     }
 
     const data = await response.json()
     const text = data.content?.[0]?.text || '{}'
     const match = text.match(/\{[\s\S]*?\}/)
-    const parsed = match ? JSON.parse(match[0]) : {}
+    const parsed = match ? JSON.parse(match[0]) : { matched: true, confidence: 0.5 }
 
-    console.log(`Claude: matched=${parsed.matched}, confidence=${parsed.confidence}, reason=${parsed.reason}`)
+    console.log(`Claude verification: matched=${parsed.matched}, confidence=${parsed.confidence}, reason=${parsed.reason}`)
 
-    // Only reject if Claude is highly confident it's a mismatch
-    if (parsed.matched === false && (parsed.confidence || 0) >= 0.80) {
+    // Only reject if Claude is very confident (>= 0.85) it's a completely different object
+    if (parsed.matched === false && (parsed.confidence || 0) >= 0.85) {
       return {
         passed: false,
         gate: 'CLAUDE',
         score: parsed.confidence,
-        reason: `Resolution rejected: ${parsed.reason || 'The after photo does not match the original complaint.'}`,
-        details: { clipScore, claudeResult: parsed, roboflowOutput },
+        reason: `Resolution rejected: ${parsed.reason || 'The after photo shows a different object than the complaint.'}`,
       }
     }
 
-    // Accept if Claude says matched OR is uncertain (benefit of doubt for same-object different-angle)
+    // Everything else passes — same object, different angle, uncertain = ACCEPT
     return {
       passed: true,
       gate: 'CLAUDE',
-      score: parsed.confidence || clipScore,
-      reason: parsed.reason || 'Claude verified: resolution accepted.',
-      details: { clipScore, claudeResult: parsed },
+      score: parsed.confidence || 0.7,
+      reason: parsed.reason || 'Resolution verified by AI.',
     }
 
   } catch (err: any) {
-    console.error('Claude fallback error:', err.message)
-    return { passed: true, gate: 'CLAUDE', score: clipScore, reason: 'Verification error — passed through' }
+    console.error('Claude verification error:', err.message)
+    // On any error, pass through — don't block the authority
+    return { passed: true, gate: 'CLAUDE', reason: 'Verification error — passed through' }
   }
 }
