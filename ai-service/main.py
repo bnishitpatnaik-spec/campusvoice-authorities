@@ -65,6 +65,9 @@ class VerifyResolutionRequest(BaseModel):
     after_url: str
     complaint_id: Optional[str] = None
 
+    class Config:
+        arbitrary_types_allowed = True
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def is_real_word(w: str) -> bool:
     w = w.lower()
