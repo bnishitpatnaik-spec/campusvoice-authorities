@@ -49,23 +49,22 @@ async function claudeVerify(
             content: [
               {
                 type: 'text',
-                text: `You are a campus complaint resolution verifier for VIT Chennai.
+                text: `You are a strict campus complaint resolution verifier for VIT Chennai.
 
 Image 1 (BEFORE): The original complaint photo showing the problem.
 Image 2 (AFTER): The resolution photo submitted by the authority.
 
-The photos may be taken from different angles, distances, or lighting conditions — this is NORMAL.
+Your task: Check if the AFTER photo resolves the SAME issue shown in the BEFORE photo.
 
-ACCEPT the resolution if:
-- Both images show the same TYPE of object (chair, desk, bin, socket, etc.)
-- The after photo shows the same general area or object
-- The issue appears to have been addressed
+STRICT RULES:
+- If BEFORE shows a water cooler/dispenser, AFTER must also show a water cooler/dispenser
+- If BEFORE shows a chair/desk/furniture, AFTER must also show a chair/desk/furniture  
+- If BEFORE shows a dustbin/bin, AFTER must also show a dustbin/bin
+- If BEFORE shows an electrical socket/switch, AFTER must also show electrical equipment
+- Different angles of the SAME object = ACCEPT
+- Completely different objects = REJECT (e.g., water cooler complaint resolved with dustbin photo)
 
-REJECT only if:
-- The images clearly show COMPLETELY DIFFERENT objects (e.g., before=chair, after=water dispenser)
-- The after photo is obviously from a completely different building/room
-
-Be LENIENT — authorities often take close-up photos for resolution proof.
+Be STRICT about object type matching. The resolution must show the SAME TYPE of object as the complaint.
 
 Respond with ONLY this JSON: {"matched": true/false, "confidence": 0.0-1.0, "reason": "brief explanation"}`,
               },
@@ -91,8 +90,8 @@ Respond with ONLY this JSON: {"matched": true/false, "confidence": 0.0-1.0, "rea
 
     console.log(`Claude verification: matched=${parsed.matched}, confidence=${parsed.confidence}, reason=${parsed.reason}`)
 
-    // Only reject if Claude is very confident (>= 0.85) it's a completely different object
-    if (parsed.matched === false && (parsed.confidence || 0) >= 0.85) {
+    // Only reject if Claude is confident (>= 0.70) it's a different object type
+    if (parsed.matched === false && (parsed.confidence || 0) >= 0.70) {
       return {
         passed: false,
         gate: 'CLAUDE',
