@@ -135,12 +135,19 @@ const ComplaintDetail = () => {
           timestamp: new Date().toISOString(),
         });
         setGpsStatus('verified');
+        console.log(`📍 GPS captured: ${pos.coords.latitude}, ${pos.coords.longitude}`);
       },
       (err) => {
         setGpsStatus('error');
-        setGpsError(err.code === 1 ? 'Location permission denied. Please allow access.' : 'Unable to get location. Try again.');
+        if (err.code === 1) {
+          setGpsError('Location permission denied. Please allow location access in your browser settings.');
+        } else if (err.code === 2) {
+          setGpsError('Location unavailable. Please check your GPS/network and try again.');
+        } else {
+          setGpsError('Location request timed out. Please try again.');
+        }
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
   };
 
@@ -150,7 +157,7 @@ const ComplaintDetail = () => {
       return;
     }
     if (!gpsCoords) {
-      toast.error('Location verification required. Please verify your location first.');
+      toast.error('Location verification required. Please click "Get Location" first.');
       return;
     }
     if (!id || !complaint) return;
