@@ -59,7 +59,7 @@ const Login = () => {
           {/* Header */}
           <div className="text-center mb-8">
             <div className="w-16 h-16 rounded-2xl overflow-hidden mx-auto mb-4">
-              <img src="/cv img2.png" alt="CampusVoice" className="w-full h-full object-cover" />
+              <img src="/logo.png" alt="CampusVoice" className="w-full h-full object-cover" />
             </div>
             <h1 className="text-2xl font-bold text-foreground">CampusVoice</h1>
             <p className="text-sm text-muted-foreground mt-1 flex items-center justify-center gap-1.5">

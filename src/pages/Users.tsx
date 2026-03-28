@@ -19,8 +19,6 @@ const UsersPage = () => {
     const unsub = onSnapshot(q, async (snap) => {
       const fetchedUsers = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser));
       setUsers(fetchedUsers);
-
-      // Fetch complaint counts per user email
       const counts: Record<string, number> = {};
       await Promise.all(
         fetchedUsers.map(async (u) => {
@@ -33,6 +31,13 @@ const UsersPage = () => {
       );
       setComplaintCounts(counts);
       setLoading(false);
+    }, () => {
+      // fallback without orderBy
+      onSnapshot(collection(db, 'users'), async (snap) => {
+        const fetchedUsers = snap.docs.map(d => ({ id: d.id, ...d.data() } as AppUser));
+        setUsers(fetchedUsers);
+        setLoading(false);
+      }, () => setLoading(false));
     });
     return () => unsub();
   }, []);

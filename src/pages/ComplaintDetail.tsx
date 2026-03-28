@@ -47,6 +47,11 @@ const ComplaintDetail = () => {
   const [internalNote, setInternalNote] = useState('');
   const [updating, setUpdating] = useState(false);
 
+  // Geofence state
+  const [gpsCoords, setGpsCoords] = useState<{ lat: number; lng: number; timestamp: string } | null>(null);
+  const [gpsStatus, setGpsStatus] = useState<'idle' | 'loading' | 'verified' | 'error'>('idle');
+  const [gpsError, setGpsError] = useState<string>('');
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -114,9 +119,38 @@ const ComplaintDetail = () => {
     setUpdating(false);
   };
 
+  const captureGpsLocation = () => {
+    setGpsStatus('loading');
+    setGpsError('');
+    if (!navigator.geolocation) {
+      setGpsStatus('error');
+      setGpsError('Geolocation is not supported by this browser.');
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setGpsCoords({
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          timestamp: new Date().toISOString(),
+        });
+        setGpsStatus('verified');
+      },
+      (err) => {
+        setGpsStatus('error');
+        setGpsError(err.code === 1 ? 'Location permission denied. Please allow access.' : 'Unable to get location. Try again.');
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
   const handleResolve = async () => {
     if (!resolutionImage) {
       toast.error('Please capture or upload a resolution proof photo first');
+      return;
+    }
+    if (!gpsCoords) {
+      toast.error('Location verification required. Please verify your location first.');
       return;
     }
     if (!id || !complaint) return;
@@ -126,6 +160,9 @@ const ComplaintDetail = () => {
         status: 'resolved',
         resolutionNote,
         resolutionImageBase64: resolutionImage,
+        lat: gpsCoords.lat,
+        lng: gpsCoords.lng,
+        timestamp: gpsCoords.timestamp,
       });
       // Send notification via Firestore for users app
       try {
@@ -140,6 +177,8 @@ const ComplaintDetail = () => {
       setShowResolvePanel(false);
       setResolutionImage(null);
       setResolutionNote('');
+      setGpsCoords(null);
+      setGpsStatus('idle');
       toast.success('Complaint marked as resolved!');
     } catch (e: any) { toast.error(e.message || 'Failed to resolve.'); }
     setUploading(false);
@@ -222,6 +261,9 @@ const ComplaintDetail = () => {
     setShowResolvePanel(false);
     setResolutionImage(null);
     setResolutionNote('');
+    setGpsCoords(null);
+    setGpsStatus('idle');
+    setGpsError('');
     stopCamera();
   };
 
@@ -237,6 +279,24 @@ const ComplaintDetail = () => {
       <Link to="/complaints" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors">
         <ArrowLeft className="w-4 h-4" /> Back to Complaints
       </Link>
+
+      {/* Raised Again notices */}
+      {complaint.raisedAgainFrom && (
+        <div style={{ background: '#FFFBEB', border: '1px solid #F59E0B', borderRadius: '10px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+          <span style={{ fontSize: '18px', flexShrink: 0 }}>🔄</span>
+          <p style={{ fontSize: '13px', color: '#92400E', margin: 0, fontWeight: 500 }}>
+            This complaint was raised again by the user from a previous resolved complaint.
+          </p>
+        </div>
+      )}
+      {complaint.raisedAgain && (
+        <div style={{ background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '10px', padding: '12px 16px', display: 'flex', alignItems: 'flex-start', gap: '10px' }}>
+          <span style={{ fontSize: '18px', flexShrink: 0 }}>✅</span>
+          <p style={{ fontSize: '13px', color: '#1E40AF', margin: 0, fontWeight: 500 }}>
+            User raised this complaint again after resolution.
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left: Complaint Info */}
@@ -386,7 +446,32 @@ const ComplaintDetail = () => {
                   📝 {complaint.resolutionNote}
                 </p>
               )}
-              {complaint.resolvedAt && (
+              {(complaint as any).geofenceVerified && (complaint as any).resolverLocation && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', padding: '8px 12px', background: '#ECFDF5', border: '1px solid #6EE7B7', borderRadius: '8px' }}>
+                  <MapPin className="w-4 h-4" style={{ color: '#059669', flexShrink: 0 }} />
+                  <div>
+                    <p style={{ fontSize: '12px', fontWeight: 700, color: '#065F46', margin: 0 }}>✅ Location Verified — VIT Chennai Campus</p>
+                    <p style={{ fontSize: '11px', color: '#6B7280', margin: '2px 0 0' }}>
+                      {(complaint as any).resolverLocation.lat.toFixed(5)}, {(complaint as any).resolverLocation.lng.toFixed(5)} · {(complaint as any).resolverLocation.distanceFromCampus}m from campus center
+                    </p>
+                  </div>
+                </div>
+              )}
+              {complaint.aiVerified && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '8px', padding: '8px 12px', background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '8px' }}>
+                  <ShieldCheck className="w-4 h-4" style={{ color: '#2563EB', flexShrink: 0 }} />
+                  <div>
+                    <p style={{ fontSize: '12px', fontWeight: 700, color: '#1E40AF', margin: 0 }}>
+                      🤖 AI Verified [{(complaint as any).aiVerificationGate || 'YOLO'}]
+                    </p>
+                    {(complaint as any).aiVerificationScore != null && (
+                      <p style={{ fontSize: '11px', color: '#6B7280', margin: '2px 0 0' }}>
+                        Similarity score: {((complaint as any).aiVerificationScore * 100).toFixed(1)}%
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}              {complaint.resolvedAt && (
                 <p className="text-xs text-muted-foreground mt-2">
                   Resolved on {new Date(complaint.resolvedAt).toLocaleDateString('en-IN', {
                     day: 'numeric', month: 'long', year: 'numeric',
@@ -471,6 +556,52 @@ const ComplaintDetail = () => {
                     <h4 style={{ fontWeight: 700, color: '#065F46', fontSize: '14px', marginBottom: '12px' }}>
                       📸 Upload Resolution Proof
                     </h4>
+
+                    {/* Gate 1: GPS Location Verification */}
+                    <div style={{ marginBottom: '12px', padding: '10px 12px', borderRadius: '8px', border: `1px solid ${gpsStatus === 'verified' ? '#86EFAC' : gpsStatus === 'error' ? '#FCA5A5' : '#D1FAE5'}`, background: gpsStatus === 'verified' ? '#ECFDF5' : gpsStatus === 'error' ? '#FEF2F2' : 'white' }}>
+                      {gpsStatus === 'idle' && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                          <span style={{ fontSize: '12px', color: '#374151', fontWeight: 500 }}>📍 Step 1: Verify your campus location</span>
+                          <button
+                            onClick={captureGpsLocation}
+                            style={{ padding: '5px 12px', background: '#059669', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}
+                          >
+                            Get Location
+                          </button>
+                        </div>
+                      )}
+                      {gpsStatus === 'loading' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '18px' }}>⏳</span>
+                          <span style={{ fontSize: '12px', color: '#374151' }}>Acquiring GPS signal...</span>
+                        </div>
+                      )}
+                      {gpsStatus === 'verified' && gpsCoords && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontSize: '18px' }}>✅</span>
+                          <div>
+                            <p style={{ fontSize: '12px', color: '#065F46', fontWeight: 700, margin: 0 }}>Location Verified — Within VIT Chennai Campus</p>
+                            <p style={{ fontSize: '11px', color: '#6B7280', margin: '2px 0 0' }}>
+                              📍 {gpsCoords.lat.toFixed(5)}, {gpsCoords.lng.toFixed(5)}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      {gpsStatus === 'error' && (
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                            <span style={{ fontSize: '16px' }}>❌</span>
+                            <span style={{ fontSize: '12px', color: '#DC2626', fontWeight: 500 }}>{gpsError}</span>
+                          </div>
+                          <button
+                            onClick={captureGpsLocation}
+                            style={{ padding: '4px 10px', background: '#EF4444', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '11px', fontWeight: 600 }}
+                          >
+                            Retry
+                          </button>
+                        </div>
+                      )}
+                    </div>
 
                     {/* Capture options */}
                     {!resolutionImage && !cameraMode && (
@@ -560,20 +691,20 @@ const ComplaintDetail = () => {
                     <motion.button
                       whileTap={{ scale: 0.98 }}
                       onClick={handleResolve}
-                      disabled={!resolutionImage || uploading}
+                      disabled={!resolutionImage || uploading || gpsStatus !== 'verified'}
                       style={{
                         width: '100%',
                         padding: '10px',
-                        background: !resolutionImage ? '#D1FAE5' : '#059669',
-                        color: !resolutionImage ? '#6B7280' : 'white',
+                        background: (!resolutionImage || gpsStatus !== 'verified') ? '#D1FAE5' : '#059669',
+                        color: (!resolutionImage || gpsStatus !== 'verified') ? '#6B7280' : 'white',
                         border: 'none',
                         borderRadius: '8px',
-                        cursor: !resolutionImage ? 'not-allowed' : 'pointer',
+                        cursor: (!resolutionImage || gpsStatus !== 'verified') ? 'not-allowed' : 'pointer',
                         fontWeight: 700,
                         fontSize: '14px',
                       }}
                     >
-                      {uploading ? '⏳ Uploading...' : '✅ Confirm Resolved'}
+                      {uploading ? '⏳ Verifying & Uploading...' : '✅ Confirm Resolved'}
                     </motion.button>
                   </div>
                 )}

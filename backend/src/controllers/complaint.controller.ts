@@ -6,6 +6,7 @@ import { ApiError } from '../utils/ApiError'
 import { uploadBase64Image } from '../services/cloudinary.service'
 import { updateUserPoints, POINTS } from '../services/gamification.service'
 import { sendStatusNotification } from '../services/notification.service'
+import { runResolutionVerification } from '../services/roboflow.service'
 
 interface AuthRequest extends Request {
   user?: { id: string; email: string; role: string; institute: string }
@@ -84,6 +85,7 @@ export const getComplaintById = asyncHandler(async (req: Request, res: Response)
 export const updateComplaintStatus = asyncHandler(async (req: AuthRequest, res: Response) => {
   const { id } = req.params
   const { status, resolutionNote, resolutionImageBase64, rejectionReason } = req.body
+  const resolverLocation = (req as any).resolverLocation || null
 
   if (!status) throw new ApiError(400, 'Status is required')
 
@@ -107,6 +109,19 @@ export const updateComplaintStatus = asyncHandler(async (req: AuthRequest, res: 
       const uploaded = await uploadBase64Image(resolutionImageBase64, 'campusvoice/resolutions')
       resolutionImageUrl = uploaded.url
     }
+
+    // Gate 2 + Gate 3: AI verification (YOLO → CLIP → Claude fallback)
+    const beforeImageUrl = complaintData.imageUrl || ''
+    if (resolutionImageUrl && beforeImageUrl) {
+      const aiResult = await runResolutionVerification(beforeImageUrl, resolutionImageUrl)
+      if (!aiResult.passed) {
+        throw new ApiError(422, `AI Verification Failed [${aiResult.gate}]: ${aiResult.reason}`)
+      }
+      updateData.aiVerified = true
+      updateData.aiVerificationGate = aiResult.gate
+      updateData.aiVerificationScore = aiResult.score ?? null
+    }
+
     const createdAt = new Date(complaintData.createdAt || Date.now())
     const resolvedAt = new Date()
     const daysToResolve = Math.floor((resolvedAt.getTime() - createdAt.getTime()) / (1000 * 60 * 60 * 24))
@@ -115,6 +130,11 @@ export const updateComplaintStatus = asyncHandler(async (req: AuthRequest, res: 
     updateData.daysToResolve = daysToResolve
     updateData.resolutionNote = resolutionNote || ''
     updateData.resolutionImageUrl = resolutionImageUrl
+    // Store geofence-verified location metadata
+    if (resolverLocation) {
+      updateData.resolverLocation = resolverLocation
+      updateData.geofenceVerified = true
+    }
 
     if (complaintData.submittedBy) {
       await updateUserPoints(complaintData.submittedBy, POINTS.COMPLAINT_RESOLVED)

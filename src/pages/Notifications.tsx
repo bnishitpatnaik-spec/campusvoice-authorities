@@ -26,6 +26,10 @@ const Notifications = () => {
     const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
       setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
+    }, () => {
+      onSnapshot(collection(db, 'notifications'), (snap) => {
+        setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() } as Notification)));
+      });
     });
     return () => unsub();
   }, []);

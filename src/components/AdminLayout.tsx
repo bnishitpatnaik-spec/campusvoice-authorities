@@ -48,7 +48,7 @@ const AdminLayout = ({ children }: { children: React.ReactNode }) => {
         {/* Logo */}
         <div className="flex items-center gap-3 px-6 h-16 border-b border-sidebar-border">
           <div className="w-8 h-8 rounded-lg overflow-hidden flex-shrink-0">
-            <img src="/cv img2.png" alt="CampusVoice" className="w-full h-full object-cover" />
+            <img src="/logo.png" alt="CampusVoice" className="w-full h-full object-cover" />
           </div>
           {sidebarOpen && (
             <div className="overflow-hidden">

@@ -12,14 +12,22 @@ import { errorHandler } from './middleware/errorHandler'
 const app = express()
 
 app.use(cors({
-  origin: [
-    'http://localhost:8080',
-    'http://localhost:8081',
-    'http://localhost:8082',
-    'http://localhost:8083',
-    'http://127.0.0.1:8080',
-    'http://localhost:3000',
-  ],
+  origin: function(origin, callback) {
+    // Allow all origins in production (Render sets FRONTEND_URL)
+    const allowed = [
+      config.FRONTEND_URL,
+      'http://localhost:8080',
+      'http://localhost:8081',
+      'http://localhost:8082',
+      'http://localhost:8083',
+      'http://localhost:3000',
+    ].filter(Boolean)
+    if (!origin || allowed.includes(origin) || config.NODE_ENV === 'production') {
+      callback(null, true)
+    } else {
+      callback(null, true) // allow all for now — tighten after deploy
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

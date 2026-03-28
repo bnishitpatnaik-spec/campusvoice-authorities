@@ -34,6 +34,9 @@ export const updateComplaintStatus = (
     resolutionNote?: string
     resolutionImageBase64?: string
     rejectionReason?: string
+    lat?: number
+    lng?: number
+    timestamp?: string
   }
 ) => request(`/complaints/${id}/status`, { method: 'PATCH', body: JSON.stringify(body) })
 

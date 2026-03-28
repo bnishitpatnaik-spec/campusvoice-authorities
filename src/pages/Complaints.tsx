@@ -31,6 +31,25 @@ const Complaints = () => {
         return { id: d.id, ...data, upvoteCount } as Complaint;
       }));
       setLoading(false);
+    }, (error) => {
+      console.error('Firestore error:', error.code, error.message);
+      // If index missing or permission denied, try without orderBy
+      const fallbackQ = collection(db, 'complaints');
+      onSnapshot(fallbackQ, (snap) => {
+        const docs = snap.docs.map(d => {
+          const data = d.data();
+          const upvoteCount = typeof data.upvoteCount === 'number'
+            ? data.upvoteCount
+            : (Array.isArray(data.upvotes) ? data.upvotes.length : 0);
+          return { id: d.id, ...data, upvoteCount } as Complaint;
+        });
+        docs.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        setComplaints(docs);
+        setLoading(false);
+      }, (err2) => {
+        console.error('Fallback Firestore error:', err2.code, err2.message);
+        setLoading(false);
+      });
     });
     return () => unsub();
   }, []);
@@ -192,6 +211,11 @@ const Complaints = () => {
                             {c.isReRaise && (
                               <span style={{ background: '#FEF2F2', color: '#DC2626', fontSize: '11px', fontWeight: 600, padding: '1px 7px', borderRadius: '20px', border: '1px solid #FCA5A5', whiteSpace: 'nowrap' }}>
                                 🔄 Re-raised
+                              </span>
+                            )}
+                            {c.raisedAgainFrom && (
+                              <span style={{ background: '#FFF7ED', color: '#C2410C', fontSize: '11px', fontWeight: 600, padding: '1px 7px', borderRadius: '20px', border: '1px solid #FDBA74', whiteSpace: 'nowrap' }}>
+                                🔁 Raised Again
                               </span>
                             )}
                           </div>

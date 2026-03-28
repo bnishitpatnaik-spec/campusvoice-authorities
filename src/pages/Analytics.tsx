@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { Link } from 'react-router-dom';
 import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
@@ -25,12 +27,21 @@ const StatusBadge = ({ status }: { status: string }) => (
 const Analytics = () => {
   const [complaints, setComplaints] = useState<Complaint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [generating, setGenerating] = useState(false);
 
   useEffect(() => {
     const q = query(collection(db, 'complaints'), orderBy('createdAt', 'desc'));
     const unsub = onSnapshot(q, (snap) => {
       setComplaints(snap.docs.map(d => ({ id: d.id, ...d.data() } as Complaint)));
       setLoading(false);
+    }, () => {
+      // fallback without orderBy if index missing
+      onSnapshot(collection(db, 'complaints'), (snap) => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() } as Complaint));
+        docs.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+        setComplaints(docs);
+        setLoading(false);
+      }, () => setLoading(false));
     });
     return () => unsub();
   }, []);
@@ -116,6 +127,191 @@ const Analytics = () => {
   // Recent 5
   const recent = complaints.slice(0, 5);
 
+  const generatePDFReport = async () => {
+    setGenerating(true);
+    try {
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageWidth = pdf.internal.pageSize.width;
+      const pageHeight = pdf.internal.pageSize.height;
+      let yPos = 20;
+
+      // HEADER
+      pdf.setFillColor(245, 245, 245);
+      pdf.rect(0, 0, pageWidth, 35, 'F');
+      pdf.setDrawColor(200, 200, 200);
+      pdf.setLineWidth(0.5);
+      pdf.line(0, 35, pageWidth, 35);
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(20);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('CampusVoice', 15, 14);
+      pdf.setFontSize(10);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(80, 80, 80);
+      pdf.text('Official Complaint Management Report', 15, 22);
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text('SRM Institute of Science and Technology — Ramapuram Campus', 15, 29);
+      const now = new Date();
+      const reportDate = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+      pdf.setFontSize(9);
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(`Generated: ${reportDate}`, pageWidth - 15, 22, { align: 'right' });
+      yPos = 45;
+
+      // DIVIDER
+      pdf.setDrawColor(220, 220, 220);
+      pdf.setLineWidth(0.3);
+      pdf.line(15, yPos, pageWidth - 15, yPos);
+      yPos += 8;
+
+      // EXECUTIVE SUMMARY
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(13);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Executive Summary', 15, yPos);
+      yPos += 8;
+
+      const resolutionRate = total > 0 ? Math.round((resolved / total) * 100) : 0;
+      autoTable(pdf, {
+        startY: yPos,
+        head: [['Metric', 'Count']],
+        body: [
+          ['Total Complaints', String(total)],
+          ['Resolved', String(resolved)],
+          ['In Progress', String(inProgress)],
+          ['Pending', String(pending)],
+          ['Rejected', String(rejected)],
+          ['Overdue', String(overdue)],
+          ['Resolution Rate', `${resolutionRate}%`],
+        ],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [30, 30, 30], fontStyle: 'bold', fontSize: 10 },
+        bodyStyles: { fontSize: 10, textColor: [50, 50, 50] },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 50, halign: 'center', fontStyle: 'bold' } },
+        margin: { left: 15, right: 15 },
+      });
+      yPos = (pdf as any).lastAutoTable.finalY + 12;
+
+      // DIVIDER
+      pdf.setDrawColor(220, 220, 220);
+      pdf.line(15, yPos, pageWidth - 15, yPos);
+      yPos += 8;
+
+      // CATEGORY DISTRIBUTION
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(13);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Complaints by Category', 15, yPos);
+      yPos += 6;
+      const categoryTableData = categoryData
+        .filter(c => c.value > 0)
+        .sort((a, b) => b.value - a.value)
+        .map(cat => [cat.name, String(cat.value), `${total > 0 ? Math.round((cat.value / total) * 100) : 0}%`]);
+      autoTable(pdf, {
+        startY: yPos,
+        head: [['Category', 'Count', 'Percentage']],
+        body: categoryTableData.length > 0 ? categoryTableData : [['No data available', '-', '-']],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [30, 30, 30], fontStyle: 'bold', fontSize: 10 },
+        bodyStyles: { fontSize: 10, textColor: [50, 50, 50] },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: { 0: { cellWidth: 100 }, 1: { cellWidth: 35, halign: 'center' }, 2: { cellWidth: 35, halign: 'center' } },
+        margin: { left: 15, right: 15 },
+      });
+      yPos = (pdf as any).lastAutoTable.finalY + 12;
+
+      // DEPARTMENT PERFORMANCE
+      if (yPos > pageHeight - 70) { pdf.addPage(); yPos = 20; }
+      pdf.setDrawColor(220, 220, 220);
+      pdf.line(15, yPos, pageWidth - 15, yPos);
+      yPos += 8;
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(13);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Department Performance', 15, yPos);
+      yPos += 6;
+      const deptTableData = departmentData.map(dept => {
+        const t = (dept.resolved || 0) + (dept.pending || 0);
+        const rate = t > 0 ? Math.round((dept.resolved / t) * 100) : 0;
+        return [dept.name, String(dept.resolved || 0), String(dept.pending || 0), String(t), `${rate}%`];
+      });
+      autoTable(pdf, {
+        startY: yPos,
+        head: [['Department', 'Resolved', 'Pending', 'Total', 'Rate']],
+        body: deptTableData.length > 0 ? deptTableData : [['No data', '-', '-', '-', '-']],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [30, 30, 30], fontStyle: 'bold', fontSize: 10 },
+        bodyStyles: { fontSize: 10, textColor: [50, 50, 50] },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: {
+          0: { cellWidth: 65 },
+          1: { cellWidth: 25, halign: 'center' },
+          2: { cellWidth: 25, halign: 'center' },
+          3: { cellWidth: 25, halign: 'center' },
+          4: { cellWidth: 30, halign: 'center' },
+        },
+        margin: { left: 15, right: 15 },
+      });
+      yPos = (pdf as any).lastAutoTable.finalY + 12;
+
+      // WEEKLY TRENDS
+      if (yPos > pageHeight - 70) { pdf.addPage(); yPos = 20; }
+      pdf.setDrawColor(220, 220, 220);
+      pdf.line(15, yPos, pageWidth - 15, yPos);
+      yPos += 8;
+      pdf.setTextColor(30, 30, 30);
+      pdf.setFontSize(13);
+      pdf.setFont('helvetica', 'bold');
+      pdf.text('Weekly Trends', 15, yPos);
+      yPos += 6;
+      const weeklyTableData = weeklyData.map(week => [
+        week.name,
+        String(week.submitted || 0),
+        String(week.resolved || 0),
+        week.submitted > 0 ? `${Math.round((week.resolved / week.submitted) * 100)}%` : '0%',
+      ]);
+      autoTable(pdf, {
+        startY: yPos,
+        head: [['Week', 'Submitted', 'Resolved', 'Resolution Rate']],
+        body: weeklyTableData.length > 0 ? weeklyTableData : [['No data', '-', '-', '-']],
+        theme: 'grid',
+        headStyles: { fillColor: [230, 230, 230], textColor: [30, 30, 30], fontStyle: 'bold', fontSize: 10 },
+        bodyStyles: { fontSize: 10, textColor: [50, 50, 50] },
+        alternateRowStyles: { fillColor: [248, 248, 248] },
+        columnStyles: {
+          0: { cellWidth: 40 },
+          1: { cellWidth: 40, halign: 'center' },
+          2: { cellWidth: 40, halign: 'center' },
+          3: { cellWidth: 50, halign: 'center' },
+        },
+        margin: { left: 15, right: 15 },
+      });
+
+      // FOOTER ON ALL PAGES
+      const totalPagesCount = (pdf.internal as any).pages.length - 1;
+      for (let i = 1; i <= totalPagesCount; i++) {
+        pdf.setPage(i);
+        pdf.setDrawColor(200, 200, 200);
+        pdf.setLineWidth(0.3);
+        pdf.line(15, pageHeight - 12, pageWidth - 15, pageHeight - 12);
+        pdf.setTextColor(130, 130, 130);
+        pdf.setFontSize(8);
+        pdf.setFont('helvetica', 'normal');
+        pdf.text('CampusVoice — SRM Institute of Science and Technology, Ramapuram', 15, pageHeight - 6);
+        pdf.text(`Page ${i} of ${totalPagesCount}`, pageWidth - 15, pageHeight - 6, { align: 'right' });
+      }
+
+      const monthName = now.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+      pdf.save(`CampusVoice_Report_${monthName.replace(' ', '_')}.pdf`);
+    } catch (error) {
+      console.error('PDF error:', error);
+      alert('Failed to generate PDF. Please try again.');
+    }
+    setGenerating(false);
+  };
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -131,6 +327,34 @@ const Analytics = () => {
 
   return (
     <div className="space-y-6">
+
+      {/* PAGE HEADER */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold text-foreground">Analytics</h1>
+        <button
+          onClick={generatePDFReport}
+          disabled={generating}
+          className="flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition-all"
+          style={{
+            background: generating ? '#E9D5FF' : '#7C3AED',
+            color: generating ? '#6B7280' : 'white',
+            cursor: generating ? 'not-allowed' : 'pointer',
+            boxShadow: generating ? 'none' : '0 2px 8px rgba(124,58,237,0.3)',
+          }}
+        >
+          {generating ? (
+            <>
+              <span style={{
+                width: 16, height: 16, border: '2px solid #9CA3AF',
+                borderTop: '2px solid #7C3AED', borderRadius: '50%',
+                animation: 'spin 1s linear infinite', display: 'inline-block',
+              }} />
+              Generating...
+            </>
+          ) : '📥 Download Report'}
+        </button>
+        <style>{`@keyframes spin { from { transform: rotate(0deg) } to { transform: rotate(360deg) } }`}</style>
+      </div>
 
       {/* SECTION 1 — KPI Cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">

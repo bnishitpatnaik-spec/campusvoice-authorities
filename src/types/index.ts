@@ -31,6 +31,8 @@ export interface Complaint {
   // Re-raised complaint flag
   isReRaise?: boolean;
   originalComplaintId?: string;
+  raisedAgainFrom?: string;
+  raisedAgain?: boolean;
   // Submitter fields (users app may use different field names)
   submittedBy?: string;
   submittedByName?: string;
