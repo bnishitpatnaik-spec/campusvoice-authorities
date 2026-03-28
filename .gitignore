@@ -1,13 +1,43 @@
+# Dependencies
 node_modules/
+.pnp
+.pnp.js
+
+# Build output
 dist/
+build/
+
+# Environment files — NEVER commit these
 .env
+.env.*
+!.env.example
+backend/.env
+ai-service/.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+.venv/
+venv/
+
+# Test images (large files)
+ai-service/test_images/
+
+# Logs
 *.log
+npm-debug.log*
+
+# OS
 .DS_Store
-coverage/
-.cache/
-.env 
-node_modules/ 
-backend/.env 
-.env 
-node_modules/ 
-backend/.env 
+Thumbs.db
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Docker
+.dockerignore
