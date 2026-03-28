@@ -5,18 +5,26 @@ const getHeaders = () => ({
   'Authorization': `Bearer ${localStorage.getItem('admin_token') || ''}`,
 })
 
-const request = async (endpoint: string, options: RequestInit = {}) => {
-  try {
-    const response = await fetch(`${BASE_URL}${endpoint}`, {
-      ...options,
-      headers: { ...getHeaders(), ...(options.headers as Record<string, string>) },
-    })
-    const data = await response.json()
-    if (!response.ok) throw new Error(data.message || 'Request failed')
-    return data
-  } catch (error: any) {
-    console.error(`API Error [${endpoint}]:`, error.message)
-    throw error
+// Retry with exponential backoff — handles Render cold starts
+const request = async (endpoint: string, options: RequestInit = {}, retries = 2) => {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const response = await fetch(`${BASE_URL}${endpoint}`, {
+        ...options,
+        headers: { ...getHeaders(), ...(options.headers as Record<string, string>) },
+      })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.message || 'Request failed')
+      return data
+    } catch (error: any) {
+      const isLast = attempt === retries
+      if (isLast) {
+        console.error(`API Error [${endpoint}]:`, error.message)
+        throw error
+      }
+      // Wait before retry (cold start can take 30s)
+      await new Promise(r => setTimeout(r, 3000 * (attempt + 1)))
+    }
   }
 }
 
