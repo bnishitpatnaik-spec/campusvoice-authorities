@@ -63,7 +63,7 @@ class VerifyImageRequest(BaseModel):
 class VerifyResolutionRequest(BaseModel):
     before_url: str
     after_url: str
-    complaint_id: str = None
+    complaint_id: Optional[str] = None
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def is_real_word(w: str) -> bool:
